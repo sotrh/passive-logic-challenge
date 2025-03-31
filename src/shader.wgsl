@@ -15,90 +15,93 @@ fn fullscreen_quad(@builtin(vertex_index) i: u32) -> VsOut {
     return VsOut(vec4(uv * 2.0 - 1.0, 0.0, 1.0), uv);
 }
 
-fn dot2(x: vec2<f32>) -> f32 {
-    return dot(x, x);
+@fragment
+fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
+    var col = vec3(vs.uv, 0.0);
+    return vec4(col, 1.0);
 }
 
-fn sdf_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
-    let pa = p - a;
-    let ba = b - a;
-    let h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
-    return length(pa - ba * h);
+struct TexturedVertex {
+    @location(0)
+    position: vec2<f32>,
+    @location(1)
+    uv: vec2<f32>,
 }
 
-fn sdf_bezier(P: vec2<f32>, A: vec2<f32>, B: vec2<f32>, C: vec2<f32>) -> f32 {
-    let a = B - A;
-    let b = A - 2.0 * B + C;
-    let c = a * 2.0;
-    let d = A - P;
-    let kk = 1.0 / dot(b, b);
-    let kx = kk * dot(a, b);
-    let ky = kk * (2.0 * dot(a, a) +  dot(d, b)) / 3.0;
-    let kz = kk * dot(d, a);
-    let p = ky - kx * kx;
-    let p3 = p * p * p;
-    let q = kx * (2.0 * kx * kx - 3.0 * ky) + kz;
-
-    var h = q * q + 4.0 * p3;
-    var res = 0.0;
-
-    if h >= 0.0 {
-        h = sqrt(h);
-        let x = (vec2(h, -h) - q) / 2.0;
-        let uv =  sign(x) * pow(abs(x), vec2(1.0/3.0));
-        let t = clamp(uv.x + uv.y - kx, 0.0, 1.0);
-        res = dot2(d + (c + b * t) * t);
-    } else {
-        let z = sqrt(-p);
-        let v = acos(q/(p * z * 2.0)) / 3.0;
-        let m = cos(v);
-        let n = sin(v) * 1.732050808;
-        let t = clamp(vec3(m+m, -n-m, n-m) * z - kx, vec3(0.0), vec3(1.0));
-        res = min(
-            dot2(d + (c + b * t.x) * t.x),
-            dot2(d + (c + b * t.y) * t.y),
-        );
-        // The third root cannot be the closest
-        // res = min(res,dot2(d+(c+b*t.z)*t.z));
-    }
-
-    return sqrt(res);
+struct CameraUniform {
+    view_proj: mat4x4<f32>,
 }
 
-struct Line {
-    a: vec2<f32>,
-    b: vec2<f32>,
-}
+@group(1)
+@binding(0)
+var<uniform> camera: CameraUniform;
 
-struct GeometryInfo {
-    preview_line: Line,
-    num_lines: u32,
-    mode: u32,
-    aspect_ratio: f32,
+@vertex
+fn textured(in: TexturedVertex) -> VsOut {
+    return VsOut(camera.view_proj * vec4(in.position, 0.0, 1.0), in.uv);
 }
 
 @group(0)
 @binding(0)
-var<uniform> geo_info: GeometryInfo;
-
+var font_texture: texture_2d<f32>;
 @group(0)
 @binding(1)
-var<storage, read> lines: array<Line>;
+var font_sampler: sampler;
+
+struct FontUniforms {
+    unit_range: vec2<f32>,
+    in_bias: f32,
+    out_bias: f32,
+    smoothness: f32,
+    super_sample: f32,
+    inv_gamma: f32,
+}
+
+@group(2)
+@binding(0)
+var<uniform> uniforms: FontUniforms;
+
+fn median(msd: vec3<f32>) -> f32 {
+    return max(min(msd.r, msd.g), min(max(msd.r, msd.g), msd.b));
+}
+
+fn screen_px_range(uv: vec2<f32>) -> f32 {
+    let screen_tex_size = vec2(1.0) / fwidth(uv);
+    return max(0.5 * dot(uniforms.unit_range, screen_tex_size), 1.0);
+}
+
+fn contour(d: f32, width: f32) -> f32 {
+    let e = width * (d - 0.5 + uniforms.in_bias) + 0.5 + uniforms.out_bias;
+    return mix(
+        clamp(e, 0.0, 1.0),
+        smoothstep(0.0, 1.0, e),
+        uniforms.smoothness
+    );
+}
+
+fn sample(uv: vec2<f32>, width: f32) -> f32 {
+    let msd = textureSample(font_texture, font_sampler, uv);
+    let sd = median(msd.rgb);
+    let opacity = contour(sd, width);
+    return opacity;
+}
 
 @fragment
-fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
-    let p = vec2(vs.uv.x * geo_info.aspect_ratio, vs.uv.y);
-    var d = sdf_line(p, geo_info.preview_line.a, geo_info.preview_line.b);
+fn msdf_text(vs: VsOut) -> @location(0) vec4<f32> {
+    let width = screen_px_range(vs.uv);
+    var opacity = sample(vs.uv, width);
 
-    for (var i = 0u; i < arrayLength(&lines) && i < geo_info.num_lines; i += 1u) {
-        var line = lines[i];
-        d = min(d, sdf_line(p, line.a, line.b));
-    }
+    let dscale = 0.345;
+    let duv = dscale * (dpdx(vs.uv) + dpdy(vs.uv));
+    let box = vec4(vs.uv - duv, vs.uv + duv);
+    let asum = sample(box.xy, width)
+        + sample(box.zw, width)
+        + sample(box.xw, width)
+        + sample(box.zy, width);
+    opacity = mix(opacity, (opacity + 0.5 * asum) / 3.0, uniforms.super_sample);
+    opacity = pow(opacity, uniforms.inv_gamma);
 
-    var col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), smoothstep(0.015, 0.01, d));
-    if (geo_info.mode == 1) {
-        col = mix(vec3(0.0, 0.0, 0.0), vec3(0.0, 0.0, 1.0), fract(d * 20.0));
-    }
+    let col = vec3(1.0);
 
-    return vec4(col, 1.0);
+    return vec4(col, opacity);
 }
