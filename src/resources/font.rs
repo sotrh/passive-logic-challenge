@@ -10,9 +10,10 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use crate::utils::RenderPipelineBuilder;
 
 use super::{
-    camera::{CameraBinder, CameraBinding}, vertex::TexturedVertex, Resources
+    camera::{CameraBinder, CameraBinding},
+    vertex::TexturedVertex,
+    Resources,
 };
-
 
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
@@ -235,9 +236,7 @@ fn generate_text_data(font: &Font, text: &str) -> (Vec<TexturedVertex>, Vec<u32>
     let mut verts = Vec::new();
     let mut indices = Vec::new();
     for c in text.chars() {
-        let glyph = font
-            .glyph(c)
-            .unwrap_or_else(|| font.unknown_glyph());
+        let glyph = font.glyph(c).unwrap_or_else(|| font.unknown_glyph());
 
         if glyph.width == 0 || glyph.height == 0 {
             cursor += glyph.xadvance as f32;
@@ -381,7 +380,7 @@ impl Font {
     pub fn glyph(&self, c: char) -> Option<&Glyph> {
         self.glyph_map.get(&c).map(|&i| &self.info.glyphs[i])
     }
-    
+
     pub fn unknown_glyph(&self) -> &Glyph {
         self.glyph(self.unknown_char).unwrap()
     }

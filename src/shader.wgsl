@@ -15,6 +15,11 @@ fn fullscreen_quad(@builtin(vertex_index) i: u32) -> VsOut {
     return VsOut(vec4(uv * 2.0 - 1.0, 0.0, 1.0), uv);
 }
 
+struct FrameData {
+    t: f32,
+    dt: f32,
+}
+
 @fragment
 fn canvas(vs: VsOut) -> @location(0) vec4<f32> {
     var col = vec3(vs.uv, 0.0);

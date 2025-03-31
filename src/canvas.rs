@@ -3,7 +3,15 @@ use std::sync::Arc;
 use anyhow::Context;
 use winit::{event_loop::ActiveEventLoop, window::Window};
 
-use crate::{resources::{self, camera::{CameraBinder, OrthoCamera}, font::{Font, TextPipeline}, FsResources}, utils::RenderPipelineBuilder};
+use crate::{
+    resources::{
+        self,
+        camera::{CameraBinder, OrthoCamera},
+        font::{Font, TextPipeline},
+        FsResources,
+    },
+    utils::RenderPipelineBuilder,
+};
 
 pub struct Canvas {
     surface: wgpu::Surface<'static>,
@@ -105,70 +113,70 @@ impl Canvas {
             })
             .build(&device)?;
 
-            let camera = OrthoCamera::new(
-                0.0,
-                window.inner_size().width as f32,
-                window.inner_size().height as f32,
-                0.0,
-            );
-            let camera_binder = CameraBinder::new(&device);
-            let camera_binding = camera_binder.bind(&device, &camera);
-    
-            let texture_bindgroup_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("texture_bindgroup_layout"),
-                    entries: &[
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 0,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Texture {
-                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                                view_dimension: wgpu::TextureViewDimension::D2,
-                                multisampled: false,
-                            },
-                            count: None,
-                        },
-                        wgpu::BindGroupLayoutEntry {
-                            binding: 1,
-                            visibility: wgpu::ShaderStages::FRAGMENT,
-                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                            count: None,
-                        },
-                    ],
-                });
+        let camera = OrthoCamera::new(
+            0.0,
+            window.inner_size().width as f32,
+            window.inner_size().height as f32,
+            0.0,
+        );
+        let camera_binder = CameraBinder::new(&device);
+        let camera_binding = camera_binder.bind(&device, &camera);
 
-            let res = FsResources::new("res");
-    
-            let font = Font::load(&res, "OpenSans MSDF.zip", '�', &device, &queue)?;
-    
-            let text_pipeline = TextPipeline::new(
-                &font,
-                &camera_binder,
-                config.view_formats[0],
-                &texture_bindgroup_layout,
-                &shader,
-                &device,
-            )?;
-    
-            let mspt_text = text_pipeline.buffer_text(&font, &device, "Tick Rate: ----")?;
-    
-            let last_time = web_time::Instant::now();
-    
-            Ok(Self {
-                config,
-                surface,
-                device,
-                queue,
-                window,
-                fullscreen_quad,
-                mspt_text,
-                font,
-                camera,
-                camera_binding,
-                text_pipeline,
-                last_time,
-                num_ticks: 0,
-            })
+        let texture_bindgroup_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("texture_bindgroup_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let res = FsResources::new("res");
+
+        let font = Font::load(&res, "OpenSans MSDF.zip", '�', &device, &queue)?;
+
+        let text_pipeline = TextPipeline::new(
+            &font,
+            &camera_binder,
+            config.view_formats[0],
+            &texture_bindgroup_layout,
+            &shader,
+            &device,
+        )?;
+
+        let mspt_text = text_pipeline.buffer_text(&font, &device, "Tick Rate: ----")?;
+
+        let last_time = web_time::Instant::now();
+
+        Ok(Self {
+            config,
+            surface,
+            device,
+            queue,
+            window,
+            fullscreen_quad,
+            mspt_text,
+            font,
+            camera,
+            camera_binding,
+            text_pipeline,
+            last_time,
+            num_ticks: 0,
+        })
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -192,7 +200,7 @@ impl Canvas {
                 return;
             }
         };
-        
+
         if self.num_ticks == 100 {
             self.text_pipeline
                 .update_text(
@@ -229,7 +237,6 @@ impl Canvas {
 
             pass.set_pipeline(&self.fullscreen_quad);
             pass.draw(0..3, 0..1);
-
 
             self.text_pipeline
                 .draw_text(&mut pass, &self.mspt_text, &self.camera_binding);
