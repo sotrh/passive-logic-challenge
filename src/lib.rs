@@ -1,5 +1,5 @@
-mod data;
 mod resources;
+mod simulation;
 mod utils;
 
 use std::sync::Arc;
@@ -15,20 +15,37 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+use crate::simulation::{Environment, Simulation};
+
 pub const CANVAS_ID: &str = "canvas";
 
 pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<canvas::Canvas>>,
     canvas: Option<canvas::Canvas>,
+    simulation: Simulation,
+    environment: Environment,
+    solar_panel: usize,
+    extractor: usize,
 }
 
 impl App {
     pub fn new(#[cfg(target_arch = "wasm32")] event_loop: &EventLoop<canvas::Canvas>) -> Self {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
+
+        let environment = Environment::default();
+        let mut simulation = Simulation::new();
+
+        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, glam::vec3(-0.5, 0.0, 0.0));
+        let extractor = simulation.add_node(10.0, 20.0, 0.9, glam::vec3(0.5, 0.0, 0.0));
+
         Self {
             canvas: None,
+            environment,
+            simulation,
+            solar_panel,
+            extractor,
             #[cfg(target_arch = "wasm32")]
             proxy,
         }
@@ -103,10 +120,11 @@ impl ApplicationHandler<canvas::Canvas> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => canvas.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
+                
                 canvas.render(event_loop);
             }
-            WindowEvent::ModifiersChanged(mods) => {}
-            WindowEvent::CursorMoved { position, .. } => {}
+            // WindowEvent::ModifiersChanged(mods) => {}
+            // WindowEvent::CursorMoved { position, .. } => {}
             WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
                 (MouseButton::Left, true) => {}
                 (MouseButton::Left, false) => {}

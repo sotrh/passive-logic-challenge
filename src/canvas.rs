@@ -22,7 +22,7 @@ pub struct Canvas {
     #[allow(unused)]
     window: Arc<Window>,
     camera: OrthoCamera,
-    camera_binding: resources::camera::CameraBinding,
+    ortho_camera_binding: resources::camera::CameraBinding,
     font: Font,
     text_pipeline: TextPipeline,
     mspt_text: resources::font::TextBuffer,
@@ -51,7 +51,7 @@ impl Canvas {
             anyhow::bail!("This example requires WebGPU");
         }
         log::info!("Backends: {backends:?}");
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends,
             ..Default::default()
         });
@@ -71,7 +71,6 @@ impl Canvas {
                     required_limits: wgpu::Limits::downlevel_defaults(),
                     ..Default::default()
                 },
-                None,
             )
             .await;
         log::info!("Requesting device");
@@ -147,7 +146,7 @@ impl Canvas {
 
         let res = FsResources::new("res");
 
-        let font = Font::load(&res, "OpenSans MSDF.zip", '�', &device, &queue)?;
+        let font = Font::load(&res, "fonts/OpenSans MSDF.zip", '�', &device, &queue)?;
 
         let text_pipeline = TextPipeline::new(
             &font,
@@ -172,7 +171,7 @@ impl Canvas {
             mspt_text,
             font,
             camera,
-            camera_binding,
+            ortho_camera_binding: camera_binding,
             text_pipeline,
             last_time,
             num_ticks: 0,
@@ -184,7 +183,7 @@ impl Canvas {
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
         self.camera.resize(self.config.width, self.config.height);
-        self.camera_binding.update(&self.camera, &self.queue);
+        self.ortho_camera_binding.update(&self.camera, &self.queue);
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -239,7 +238,7 @@ impl Canvas {
             pass.draw(0..3, 0..1);
 
             self.text_pipeline
-                .draw_text(&mut pass, &self.mspt_text, &self.camera_binding);
+                .draw_text(&mut pass, &self.mspt_text, &self.ortho_camera_binding);
         }
 
         self.queue.submit([encoder.finish()]);

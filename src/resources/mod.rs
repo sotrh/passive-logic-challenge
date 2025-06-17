@@ -6,7 +6,10 @@ use std::{
 pub mod buffer;
 pub mod camera;
 pub mod font;
+pub mod model;
+pub mod texture;
 pub mod vertex;
+
 
 pub trait Resources {
     fn load_string(&self, path: impl AsRef<Path>) -> anyhow::Result<String>;
