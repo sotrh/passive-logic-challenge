@@ -1,3 +1,4 @@
+use core::f32;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -6,8 +7,13 @@ use winit::{event_loop::ActiveEventLoop, window::Window};
 use crate::{
     resources::{
         self,
-        camera::{CameraBinder, OrthoCamera},
+        buffer::{self, BackedBuffer},
+        camera::{CameraBinder, CameraController, OrthoCamera, PerspectiveCamera},
         font::{Font, TextPipeline},
+        light::{LightBinder, LightUniform},
+        model::{MaterialBinder, ModelPipeline},
+        texture::TextureBinder,
+        vertex::InstanceVertex,
         FsResources,
     },
     utils::RenderPipelineBuilder,
@@ -21,13 +27,22 @@ pub struct Canvas {
     fullscreen_quad: wgpu::RenderPipeline,
     #[allow(unused)]
     window: Arc<Window>,
-    camera: OrthoCamera,
+    ortho_camera: OrthoCamera,
     ortho_camera_binding: resources::camera::CameraBinding,
     font: Font,
     text_pipeline: TextPipeline,
     mspt_text: resources::font::TextBuffer,
-    last_time: std::time::Instant,
+    last_time: web_time::Instant,
     num_ticks: u32,
+    depth_texture: wgpu::Texture,
+    model_pipeline: ModelPipeline,
+    node_model: resources::model::ModelId,
+    instances: buffer::BackedBuffer<InstanceVertex>,
+    perspective_camera: PerspectiveCamera,
+    perspective_camera_binding: resources::camera::CameraBinding,
+    camera_controller: CameraController,
+    light_buffer: BackedBuffer<LightUniform>,
+    light_binding: resources::light::LightBinding,
 }
 
 impl Canvas {
@@ -66,12 +81,10 @@ impl Canvas {
             .await
             .with_context(|| "No compatible adapter")?;
         let device_request = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_limits: wgpu::Limits::downlevel_defaults(),
-                    ..Default::default()
-                },
-            )
+            .request_device(&wgpu::DeviceDescriptor {
+                required_limits: wgpu::Limits::downlevel_defaults(),
+                ..Default::default()
+            })
             .await;
         log::info!("Requesting device");
         #[cfg(not(target_arch = "wasm32"))]
@@ -82,8 +95,8 @@ impl Canvas {
         let mut config = surface
             .get_default_config(
                 &adapter,
-                window.inner_size().width,
-                window.inner_size().height,
+                window.inner_size().width.max(1),
+                window.inner_size().height.max(1),
             )
             .with_context(|| "Surface is invalid")?;
         config.view_formats.push(config.format.add_srgb_suffix());
@@ -112,37 +125,16 @@ impl Canvas {
             })
             .build(&device)?;
 
-        let camera = OrthoCamera::new(
+        let ortho_camera = OrthoCamera::new(
             0.0,
             window.inner_size().width as f32,
             window.inner_size().height as f32,
             0.0,
         );
         let camera_binder = CameraBinder::new(&device);
-        let camera_binding = camera_binder.bind(&device, &camera);
+        let ortho_camera_binding = camera_binder.bind(&device, &ortho_camera);
 
-        let texture_bindgroup_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("texture_bindgroup_layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
+        let texture_binder = TextureBinder::new(&device);
 
         let res = FsResources::new("res");
 
@@ -152,12 +144,76 @@ impl Canvas {
             &font,
             &camera_binder,
             config.view_formats[0],
-            &texture_bindgroup_layout,
+            &texture_binder,
             &shader,
             &device,
         )?;
 
         let mspt_text = text_pipeline.buffer_text(&font, &device, "Tick Rate: ----")?;
+
+        let depth_format = wgpu::TextureFormat::Depth32Float;
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("depth_texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: depth_format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        let light_buffer = BackedBuffer::with_data(
+            &device,
+            vec![LightUniform {
+                position: glam::vec4(0.0, 1.0, 0.0, 1.0),
+                color: glam::vec4(1.0, 1.0, 1.0, 1.0),
+            }],
+            wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
+        );
+        let light_binder = LightBinder::new(&device);
+        let light_binding = light_binder.bind(&device, &light_buffer);
+
+        let material_binder = MaterialBinder::new(&device);
+        let mut model_pipeline = ModelPipeline::new(
+            &device,
+            config.format,
+            depth_format,
+            &camera_binder,
+            &material_binder,
+            &light_binder,
+        );
+
+        let node_model = model_pipeline.load_obj(
+            &device,
+            &queue,
+            &material_binder,
+            &res,
+            "models/spherical-cube.obj",
+        )?;
+
+        let instances = buffer::BackedBuffer::with_data(
+            &device,
+            vec![InstanceVertex::default()],
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        let perspective_camera = PerspectiveCamera::new(
+            glam::vec3(0.0, 0.0, 2.0),
+            f32::consts::FRAC_PI_2,
+            0.0,
+            config.width,
+            config.height,
+            f32::consts::FRAC_PI_4,
+            0.1,
+            100.0,
+        );
+        let perspective_camera_binding = camera_binder.bind(&device, &perspective_camera);
+        let camera_controller = CameraController::new(10.0, 0.5);
 
         let last_time = web_time::Instant::now();
 
@@ -167,12 +223,21 @@ impl Canvas {
             device,
             queue,
             window,
+            depth_texture,
             fullscreen_quad,
             mspt_text,
             font,
-            camera,
-            ortho_camera_binding: camera_binding,
+            ortho_camera,
+            ortho_camera_binding,
             text_pipeline,
+            model_pipeline,
+            node_model,
+            instances,
+            perspective_camera,
+            perspective_camera_binding,
+            camera_controller,
+            light_buffer,
+            light_binding,
             last_time,
             num_ticks: 0,
         })
@@ -182,8 +247,10 @@ impl Canvas {
         self.config.width = width.max(1);
         self.config.height = height.max(1);
         self.surface.configure(&self.device, &self.config);
-        self.camera.resize(self.config.width, self.config.height);
-        self.ortho_camera_binding.update(&self.camera, &self.queue);
+        self.ortho_camera
+            .resize(self.config.width, self.config.height);
+        self.ortho_camera_binding
+            .update(&self.ortho_camera, &self.queue);
     }
 
     pub fn render(&mut self, event_loop: &ActiveEventLoop) {
@@ -215,10 +282,17 @@ impl Canvas {
         }
         self.num_ticks += 1;
 
+        self.camera_controller
+            .update_camera(&mut self.perspective_camera, self.last_time.elapsed());
+        self.perspective_camera_binding
+            .update(&self.perspective_camera, &self.queue);
+
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor {
             format: self.config.view_formats.get(0).copied(),
             ..Default::default()
         });
+        let depth_view = self.depth_texture.create_view(&Default::default());
+
         let mut encoder = self.device.create_command_encoder(&Default::default());
 
         {
@@ -234,11 +308,41 @@ impl Canvas {
                 ..Default::default()
             });
 
-            pass.set_pipeline(&self.fullscreen_quad);
-            pass.draw(0..3, 0..1);
+            // pass.set_pipeline(&self.fullscreen_quad);
+            // pass.draw(0..3, 0..1);
 
             self.text_pipeline
                 .draw_text(&mut pass, &self.mspt_text, &self.ortho_camera_binding);
+        }
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            });
+
+            self.model_pipeline.draw(
+                &mut pass,
+                self.node_model,
+                &self.perspective_camera_binding,
+                &self.light_binding,
+                &self.instances,
+            );
         }
 
         self.queue.submit([encoder.finish()]);

@@ -201,3 +201,4 @@ impl<'a, T: bytemuck::Pod + bytemuck::Zeroable> Drop for IndexedBatch<'a, T> {
         }
     }
 }
+

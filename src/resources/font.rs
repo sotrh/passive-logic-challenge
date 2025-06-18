@@ -7,7 +7,7 @@ use std::{
 use glam::{vec2, Vec2};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::utils::RenderPipelineBuilder;
+use crate::{resources::texture, utils::RenderPipelineBuilder};
 
 use super::{
     camera::{CameraBinder, CameraBinding},
@@ -40,7 +40,7 @@ impl TextPipeline {
         font: &Font,
         camera_binder: &CameraBinder,
         surface_format: wgpu::TextureFormat,
-        texture_bindgroup_layout: &wgpu::BindGroupLayout,
+        texture_binder: &texture::TextureBinder,
         shader: &wgpu::ShaderModule,
         device: &wgpu::Device,
     ) -> anyhow::Result<Self> {
@@ -90,7 +90,7 @@ impl TextPipeline {
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
             bind_group_layouts: &[
-                texture_bindgroup_layout,
+                texture_binder.layout(),
                 camera_binder.layout(),
                 &font_uniform_bg_layout,
             ],

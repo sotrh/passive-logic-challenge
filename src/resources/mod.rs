@@ -9,6 +9,7 @@ pub mod font;
 pub mod model;
 pub mod texture;
 pub mod vertex;
+pub mod light;
 
 
 pub trait Resources {
@@ -31,11 +32,15 @@ impl FsResources {
 impl Resources for FsResources {
     fn load_binary(&self, path: impl AsRef<Path>) -> anyhow::Result<Vec<u8>> {
         // TODO: WASM
-        Ok(fs::read(self.base_dir.join(path))?)
+        let full_path = self.base_dir.join(path);
+        log::info!("load_binary({})", full_path.display());
+        Ok(fs::read(full_path)?)
     }
 
     fn load_string(&self, path: impl AsRef<Path>) -> anyhow::Result<String> {
         // TODO: WASM
-        Ok(fs::read_to_string(self.base_dir.join(path))?)
+        let full_path = self.base_dir.join(path);
+        log::info!("load_string({})", full_path.display());
+        Ok(fs::read_to_string(full_path)?)
     }
 }

@@ -42,7 +42,11 @@ impl Texture {
             mipmap_filter: wgpu::FilterMode::Nearest,
             lod_min_clamp: 0.0,
             lod_max_clamp: 100.0,
-            compare: Some(wgpu::CompareFunction::LessEqual),
+            compare: if desc.format.is_depth_stencil_format() {
+                Some(wgpu::CompareFunction::LessEqual)
+            } else {
+                None
+            },
             ..Default::default()
         });
 
@@ -248,5 +252,70 @@ impl Texture {
         queue.submit([encoder.finish()]);
 
         texture
+    }
+}
+
+pub struct TextureBinder {
+    layout: wgpu::BindGroupLayout,
+}
+
+impl TextureBinder {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("TextureBinder"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    count: None,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    count: None,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                },
+            ],
+        });
+
+        Self { layout }
+    }
+
+    pub fn bind(&self, device: &wgpu::Device, texture: &Texture) -> TextureBinding {
+        TextureBinding {
+            bind_group: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                layout: &self.layout,
+                label: None,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&texture.view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&texture.sampler),
+                    },
+                ],
+            }),
+        }
+    }
+    
+    pub(crate) fn layout(&self) -> &wgpu::BindGroupLayout {
+        &self.layout
+    }
+}
+
+pub struct TextureBinding {
+    bind_group: wgpu::BindGroup,
+}
+
+impl TextureBinding {
+    pub fn bind_group(&self) -> &wgpu::BindGroup {
+        &self.bind_group
     }
 }
