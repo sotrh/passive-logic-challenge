@@ -226,8 +226,8 @@ impl CameraController {
         }
     }
 
-    pub fn process_keyboard(&mut self, key: KeyCode, pressed: bool, speed: f32) -> bool {
-        let amount = if pressed { 1.0 } else { 0.0 } * speed;
+    pub fn process_keyboard(&mut self, key: KeyCode, pressed: bool) -> bool {
+        let amount = if pressed { 1.0 } else { 0.0 };
         match key {
             KeyCode::KeyW | KeyCode::ArrowUp => {
                 self.amount_forward = amount;

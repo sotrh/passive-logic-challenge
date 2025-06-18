@@ -33,10 +33,11 @@ struct InstanceInput {
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) tangent_position: vec3<f32>,
-    @location(2) tangent_light_position: vec3<f32>,
-    @location(3) tangent_view_position: vec3<f32>,
+    @location(0) debug: vec4<f32>,
+    @location(1) tex_coords: vec2<f32>,
+    @location(2) tangent_position: vec3<f32>,
+    @location(3) tangent_light_position: vec3<f32>,
+    @location(4) tangent_view_position: vec3<f32>,
 }
 
 @vertex
@@ -74,6 +75,7 @@ fn vs_main(
     out.tangent_position = tangent_matrix * world_position.xyz;
     out.tangent_view_position = tangent_matrix * camera.view_pos.xyz;
     out.tangent_light_position = tangent_matrix * light.position;
+    out.debug = vec4(world_normal, 0.0);
     return out;
 }
 
@@ -109,7 +111,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let specular_strength = pow(max(dot(tangent_normal, half_dir), 0.0), 32.0);
     let specular_color = specular_strength * light.color;
 
-    let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
+    // let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
+    let result = in.debug.xyz * 0.5 + 0.5;
 
     return vec4<f32>(result, object_color.a);
 }

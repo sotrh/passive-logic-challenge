@@ -69,7 +69,10 @@ impl Model {
         let parent_dir = path.parent().unwrap();
 
         let (obj_models, obj_materials) =
-            tobj::load_obj_buf(&mut reader, &tobj::LoadOptions::default(), |path| {
+            tobj::load_obj_buf(&mut reader, &tobj::LoadOptions {
+                triangulate: true,
+                ..Default::default()
+            }, |path| {
                 let rel_path = parent_dir.join(path);
                 let mut reader = Cursor::new(res.load_string(rel_path).unwrap());
                 tobj::load_mtl_buf(&mut reader)
@@ -242,7 +245,7 @@ impl ModelPipeline {
             push_constant_ranges: &[],
         });
 
-        let module = device.create_shader_module(wgpu::include_wgsl!("shaded.wgsl"));
+        let module = device.create_shader_module(wgpu::include_wgsl!("normal_mapped.wgsl"));
 
         let draw_model_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ModelPipeline"),

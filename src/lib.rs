@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use winit::{
     application::ApplicationHandler,
-    event::{KeyEvent, MouseButton, WindowEvent},
+    event::{DeviceEvent, KeyEvent, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::Window,
@@ -105,6 +105,25 @@ impl ApplicationHandler<canvas::Canvas> for App {
         self.canvas = Some(event);
     }
 
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        let canvas = match self.canvas.as_mut() {
+            Some(canvas) => canvas,
+            None => return,
+        };
+        
+        match event {
+            DeviceEvent::MouseMotion { delta: (fx, fy) } => {
+                canvas.handle_mouse_move(fx, fy);
+            }
+            _ => {}
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -120,16 +139,13 @@ impl ApplicationHandler<canvas::Canvas> for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => canvas.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
-                
                 canvas.render(event_loop);
             }
             // WindowEvent::ModifiersChanged(mods) => {}
             // WindowEvent::CursorMoved { position, .. } => {}
-            WindowEvent::MouseInput { state, button, .. } => match (button, state.is_pressed()) {
-                (MouseButton::Left, true) => {}
-                (MouseButton::Left, false) => {}
-                _ => {}
-            },
+            WindowEvent::MouseInput { state, button, .. } => {
+                canvas.handle_mouse_button(button, state.is_pressed())
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -140,8 +156,7 @@ impl ApplicationHandler<canvas::Canvas> for App {
                 ..
             } => match (code, state.is_pressed()) {
                 (KeyCode::Escape, true) => event_loop.exit(),
-                (KeyCode::Space, true) => {}
-                _ => {}
+                (_, pressed) => canvas.handle_key(code, pressed),
             },
             _ => {}
         }

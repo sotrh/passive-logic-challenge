@@ -2,7 +2,7 @@ use core::f32;
 use std::sync::Arc;
 
 use anyhow::Context;
-use winit::{event_loop::ActiveEventLoop, window::Window};
+use winit::{event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 
 use crate::{
     resources::{
@@ -32,7 +32,7 @@ pub struct Canvas {
     font: Font,
     text_pipeline: TextPipeline,
     mspt_text: resources::font::TextBuffer,
-    last_time: web_time::Instant,
+    frame_timer: web_time::Instant,
     num_ticks: u32,
     depth_texture: wgpu::Texture,
     model_pipeline: ModelPipeline,
@@ -43,6 +43,8 @@ pub struct Canvas {
     camera_controller: CameraController,
     light_buffer: BackedBuffer<LightUniform>,
     light_binding: resources::light::LightBinding,
+    lmb_down: bool,
+    gameplay_timer: web_time::Instant,
 }
 
 impl Canvas {
@@ -203,8 +205,8 @@ impl Canvas {
         );
 
         let perspective_camera = PerspectiveCamera::new(
-            glam::vec3(0.0, 0.0, 2.0),
-            f32::consts::FRAC_PI_2,
+            glam::vec3(0.0, 0.0, 3.0),
+            -f32::consts::FRAC_PI_2,
             0.0,
             config.width,
             config.height,
@@ -213,7 +215,7 @@ impl Canvas {
             100.0,
         );
         let perspective_camera_binding = camera_binder.bind(&device, &perspective_camera);
-        let camera_controller = CameraController::new(10.0, 0.5);
+        let camera_controller = CameraController::new(1.0, 1.0);
 
         let last_time = web_time::Instant::now();
 
@@ -238,8 +240,10 @@ impl Canvas {
             camera_controller,
             light_buffer,
             light_binding,
-            last_time,
+            frame_timer: last_time,
             num_ticks: 0,
+            lmb_down: false,
+            gameplay_timer: web_time::Instant::now(),
         })
     }
 
@@ -271,19 +275,22 @@ impl Canvas {
             self.text_pipeline
                 .update_text(
                     &self.font,
-                    &format!("Tick Rate: {:?}", self.last_time.elapsed() / 100),
+                    &format!("Tick Rate: {:?}", self.frame_timer.elapsed() / 100),
                     &mut self.mspt_text,
                     &self.device,
                     &self.queue,
                 )
                 .unwrap();
-            self.last_time = web_time::Instant::now();
+            self.frame_timer = web_time::Instant::now();
             self.num_ticks = 0;
         }
         self.num_ticks += 1;
 
+        let dt = self.gameplay_timer.elapsed();
+        self.gameplay_timer = web_time::Instant::now();
+
         self.camera_controller
-            .update_camera(&mut self.perspective_camera, self.last_time.elapsed());
+            .update_camera(&mut self.perspective_camera, dt);
         self.perspective_camera_binding
             .update(&self.perspective_camera, &self.queue);
 
@@ -308,8 +315,8 @@ impl Canvas {
                 ..Default::default()
             });
 
-            // pass.set_pipeline(&self.fullscreen_quad);
-            // pass.draw(0..3, 0..1);
+            pass.set_pipeline(&self.fullscreen_quad);
+            pass.draw(0..3, 0..1);
 
             self.text_pipeline
                 .draw_text(&mut pass, &self.mspt_text, &self.ortho_camera_binding);
@@ -355,5 +362,25 @@ impl Canvas {
             x / self.config.width.max(1) as f32 * aspect_ratio,
             1.0 - y / self.config.height.max(1) as f32,
         )
+    }
+
+    pub(crate) fn handle_mouse_move(&mut self, dx: f64, dy: f64) {
+        if self.lmb_down {
+            self.camera_controller.process_mouse(dx, dy);
+        }
+    }
+
+    pub(crate) fn handle_mouse_button(&mut self, button: MouseButton, pressed: bool) {
+        match button {
+            MouseButton::Left => {
+                self.lmb_down = pressed;
+                self.window.set_cursor_visible(!pressed);
+            },
+            _ => {}
+        }
+    }
+
+    pub(crate) fn handle_key(&mut self, key: KeyCode, pressed: bool) {
+        self.camera_controller.process_keyboard(key, pressed);
     }
 }
