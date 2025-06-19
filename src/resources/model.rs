@@ -68,15 +68,19 @@ impl Model {
 
         let parent_dir = path.parent().unwrap();
 
-        let (obj_models, obj_materials) =
-            tobj::load_obj_buf(&mut reader, &tobj::LoadOptions {
+        let (obj_models, obj_materials) = tobj::load_obj_buf(
+            &mut reader,
+            &tobj::LoadOptions {
                 triangulate: true,
+                single_index: true,
                 ..Default::default()
-            }, |path| {
+            },
+            |path| {
                 let rel_path = parent_dir.join(path);
                 let mut reader = Cursor::new(res.load_string(rel_path).unwrap());
                 tobj::load_mtl_buf(&mut reader)
-            })?;
+            },
+        )?;
 
         // We're assuming that the texture files are stored with the obj file
         let containing_folder = path.parent().context("Directory has no parent")?;
@@ -121,6 +125,37 @@ impl Model {
                 &mat.name,
                 diffuse_texture,
                 normal_texture,
+                material_binder,
+            ));
+        }
+
+        if materials.is_empty() {
+            materials.push(Material::new(
+                device,
+                "default",
+                texture::Texture::from_color(
+                    device,
+                    queue,
+                    1,
+                    1,
+                    wgpu::Color::WHITE,
+                    true,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
+                texture::Texture::from_color(
+                    device,
+                    queue,
+                    1,
+                    1,
+                    wgpu::Color {
+                        r: 0.5,
+                        g: 0.5,
+                        b: 1.0,
+                        a: 1.0,
+                    },
+                    false,
+                    wgpu::TextureUsages::TEXTURE_BINDING,
+                ),
                 material_binder,
             ));
         }
@@ -329,6 +364,10 @@ impl ModelPipeline {
             pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
             pass.draw_indexed(0..mesh.num_elements, 0, 0..instances.len());
         }
+    }
+    
+    pub(crate) fn get_model(&self, model: ModelId) -> Option<&Model> {
+        self.models.get(model.0)
     }
 }
 

@@ -1,3 +1,5 @@
+pub mod visualization;
+
 use core::f32;
 use std::ops::{Add, AddAssign};
 
@@ -22,11 +24,15 @@ impl Default for Environment {
 #[derive(Debug, Clone)]
 pub struct Simulation {
     nodes: Vec<Node>,
+    connections: Vec<Connection>,
 }
 
 impl Simulation {
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self {
+            nodes: Vec::new(),
+            connections: Vec::new(),
+        }
     }
 
     pub fn add_node(
@@ -49,6 +55,31 @@ impl Simulation {
         self.nodes.get(node)
     }
 
+    pub fn connect_node(&mut self, input: usize, output: usize, flow_rate: f32) {
+        if input < self.nodes.len() && output < self.nodes.len() {
+            self.connections.push(Connection {
+                flow_rate,
+                input,
+                output,
+            });
+        }
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub fn connections(&self) -> &[Connection] {
+        &self.connections
+    }
+
+    pub fn connected_nodes(&self) -> IterConnections {
+        IterConnections {
+            simulation: self,
+            index: 0,
+        }
+    }
+
     pub fn tick(&mut self, environment: &Environment, dt: f32) {
         self.handle_heat_losses(environment, dt);
     }
@@ -58,6 +89,38 @@ impl Simulation {
             let temp_diff = node.fluid.temp - environment.ambient_temp;
             node.fluid.temp -= temp_diff * (1.0 - node.insulation) * dt;
         }
+    }
+}
+
+pub struct IterConnections<'a> {
+    simulation: &'a Simulation,
+    index: usize,
+}
+
+impl<'a> Iterator for IterConnections<'a> {
+    type Item = (f32, &'a Node, &'a Node);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut out = None;
+
+        while self.index < self.simulation.connections.len() {
+            let connection = &self.simulation.connections[self.index];
+
+            if self.simulation.nodes.len() > connection.input
+                && self.simulation.nodes.len() > connection.output
+            {
+                out = Some((
+                    connection.flow_rate,
+                    &self.simulation.nodes[connection.input],
+                    &self.simulation.nodes[connection.output],
+                ))
+            }
+
+            self.index += 1;
+
+        }
+        
+        out
     }
 }
 
@@ -87,9 +150,16 @@ impl AddAssign for Fluid {
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    fluid: Fluid,
-    insulation: f32,
-    position: glam::Vec3,
+    pub fluid: Fluid,
+    pub insulation: f32,
+    pub position: glam::Vec3,
+}
+
+#[derive(Debug, Clone)]
+pub struct Connection {
+    pub flow_rate: f32,
+    pub input: usize,
+    pub output: usize,
 }
 
 #[cfg(test)]

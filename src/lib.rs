@@ -23,10 +23,6 @@ pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<canvas::Canvas>>,
     canvas: Option<canvas::Canvas>,
-    simulation: Simulation,
-    environment: Environment,
-    solar_panel: usize,
-    extractor: usize,
 }
 
 impl App {
@@ -34,18 +30,8 @@ impl App {
         #[cfg(target_arch = "wasm32")]
         let proxy = Some(event_loop.create_proxy());
 
-        let environment = Environment::default();
-        let mut simulation = Simulation::new();
-
-        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, glam::vec3(-0.5, 0.0, 0.0));
-        let extractor = simulation.add_node(10.0, 20.0, 0.9, glam::vec3(0.5, 0.0, 0.0));
-
         Self {
             canvas: None,
-            environment,
-            simulation,
-            solar_panel,
-            extractor,
             #[cfg(target_arch = "wasm32")]
             proxy,
         }

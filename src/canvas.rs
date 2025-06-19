@@ -13,10 +13,9 @@ use crate::{
         light::{LightBinder, LightUniform},
         model::{MaterialBinder, ModelPipeline},
         texture::TextureBinder,
-        vertex::InstanceVertex,
+        vertex::{ColoredInstance, InstanceVertex},
         FsResources,
-    },
-    utils::RenderPipelineBuilder,
+    }, simulation::{visualization::VisualizationPipeline, Environment, Simulation}, utils::RenderPipelineBuilder
 };
 
 pub struct Canvas {
@@ -36,8 +35,7 @@ pub struct Canvas {
     num_ticks: u32,
     depth_texture: wgpu::Texture,
     model_pipeline: ModelPipeline,
-    node_model: resources::model::ModelId,
-    instances: buffer::BackedBuffer<InstanceVertex>,
+    visualization_pipeline: VisualizationPipeline,
     perspective_camera: PerspectiveCamera,
     perspective_camera_binding: resources::camera::CameraBinding,
     camera_controller: CameraController,
@@ -45,6 +43,14 @@ pub struct Canvas {
     light_binding: resources::light::LightBinding,
     lmb_down: bool,
     gameplay_timer: web_time::Instant,
+    simulation: Simulation,
+    environment: Environment,
+    solar_panel: usize,
+    extractor: usize,
+    node_model: resources::model::ModelId,
+    connection_model: resources::model::ModelId,
+    node_instances: buffer::BackedBuffer<ColoredInstance>,
+    connection_instances: BackedBuffer<ColoredInstance>,
 }
 
 impl Canvas {
@@ -172,7 +178,7 @@ impl Canvas {
         let light_buffer = BackedBuffer::with_data(
             &device,
             vec![LightUniform {
-                position: glam::vec4(0.0, 1.0, 0.0, 1.0),
+                position: glam::vec4(2.0, 2.0, 2.0, 1.0),
                 color: glam::vec4(1.0, 1.0, 1.0, 1.0),
             }],
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::UNIFORM,
@@ -198,11 +204,13 @@ impl Canvas {
             "models/spherical-cube.obj",
         )?;
 
-        let instances = buffer::BackedBuffer::with_data(
+        let connection_model = model_pipeline.load_obj(
             &device,
-            vec![InstanceVertex::default()],
-            wgpu::BufferUsages::VERTEX,
-        );
+            &queue,
+            &material_binder,
+            &res,
+            "models/connection.obj",
+        )?;
 
         let perspective_camera = PerspectiveCamera::new(
             glam::vec3(0.0, 0.0, 3.0),
@@ -216,6 +224,33 @@ impl Canvas {
         );
         let perspective_camera_binding = camera_binder.bind(&device, &perspective_camera);
         let camera_controller = CameraController::new(1.0, 1.0);
+
+        let environment = Environment::default();
+        let mut simulation = Simulation::new();
+
+        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, glam::vec3(-0.5, 0.0, 0.0));
+        let extractor = simulation.add_node(10.0, 20.0, 0.9, glam::vec3(0.5, 0.0, 0.0));
+
+        simulation.connect_node(solar_panel, extractor, 1.0);
+        simulation.connect_node(extractor, solar_panel, 1.0);
+
+        let node_instances = buffer::BackedBuffer::with_data(
+            &device,
+            simulation.nodes().iter().map(|node| {
+                ColoredInstance::with_position_scale(glam::vec3(1.0, 0.0, 0.0), node.position, 0.1)
+            }).collect(),
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        let connection_instances = buffer::BackedBuffer::with_data(
+            &device,
+            simulation.connected_nodes().map(|(flow_rate, input, output)| {
+                ColoredInstance::extend_between(glam::vec3(1.0, 0.0, 0.0), input.position, output.position, 0.02 * flow_rate)
+            }).collect(),
+            wgpu::BufferUsages::VERTEX,
+        );
+
+        let visualization_pipeline = VisualizationPipeline::new(&device, config.format, depth_format, &camera_binder);
 
         let last_time = web_time::Instant::now();
 
@@ -233,8 +268,11 @@ impl Canvas {
             ortho_camera_binding,
             text_pipeline,
             model_pipeline,
+            visualization_pipeline,
             node_model,
-            instances,
+            node_instances,
+            connection_model,
+            connection_instances,
             perspective_camera,
             perspective_camera_binding,
             camera_controller,
@@ -243,6 +281,10 @@ impl Canvas {
             frame_timer: last_time,
             num_ticks: 0,
             lmb_down: false,
+            environment,
+            simulation,
+            solar_panel,
+            extractor,
             gameplay_timer: web_time::Instant::now(),
         })
     }
@@ -343,12 +385,20 @@ impl Canvas {
                 ..Default::default()
             });
 
-            self.model_pipeline.draw(
+            self.visualization_pipeline.draw(
                 &mut pass,
                 self.node_model,
+                &self.model_pipeline,
                 &self.perspective_camera_binding,
-                &self.light_binding,
-                &self.instances,
+                &self.node_instances,
+            );
+            
+            self.visualization_pipeline.draw(
+                &mut pass,
+                self.connection_model,
+                &self.model_pipeline,
+                &self.perspective_camera_binding,
+                &self.connection_instances,
             );
         }
 

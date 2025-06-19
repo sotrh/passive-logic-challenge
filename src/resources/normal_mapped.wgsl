@@ -75,7 +75,7 @@ fn vs_main(
     out.tangent_position = tangent_matrix * world_position.xyz;
     out.tangent_view_position = tangent_matrix * camera.view_pos.xyz;
     out.tangent_light_position = tangent_matrix * light.position;
-    out.debug = vec4(world_normal, 0.0);
+    out.debug = vec4(world_normal * 0.5 + 0.5, 0.0);
     return out;
 }
 
@@ -95,7 +95,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let object_color: vec4<f32> = textureSample(t_diffuse, s_diffuse, in.tex_coords);
     let object_normal: vec4<f32> = textureSample(t_normal, s_normal, in.tex_coords);
     
-    // We don't need (or want) much ambient light, so 0.1 is fine
     let ambient_strength = 0.1;
     let ambient_color = light.color * ambient_strength;
 
@@ -111,8 +110,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let specular_strength = pow(max(dot(tangent_normal, half_dir), 0.0), 32.0);
     let specular_color = specular_strength * light.color;
 
-    // let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
-    let result = in.debug.xyz * 0.5 + 0.5;
+    let result = (ambient_color + diffuse_color + specular_color) * object_color.xyz;
+    // let result = in.debug.xyz;
+    // let result = tangent_normal * 0.5 + 0.5;
+    // let result = vec3(in.tex_coords, 0.0);
 
     return vec4<f32>(result, object_color.a);
 }
