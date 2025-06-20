@@ -2,6 +2,7 @@ use core::f32;
 use std::sync::Arc;
 
 use anyhow::Context;
+use glam::FloatExt;
 use winit::{event::MouseButton, event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
 
 use crate::{
@@ -15,8 +16,19 @@ use crate::{
         texture::TextureBinder,
         vertex::{ColoredInstance, InstanceVertex},
         FsResources,
-    }, simulation::{visualization::VisualizationPipeline, Environment, Simulation}, utils::RenderPipelineBuilder
+    },
+    simulation::{visualization::VisualizationPipeline, Environment, Simulation, SolarPanel},
+    utils::{rev_lerp, RenderPipelineBuilder},
 };
+
+const SIMULATION_TICK_RATE: web_time::Duration = web_time::Duration::from_millis(16);
+const SIMULATION_TICK_RATE_F32: f32 = SIMULATION_TICK_RATE.as_secs_f32();
+
+const HOT_TEMP: f32 = 100.0;
+const HOT_COLOR: glam::Vec3 = glam::vec3(1.0, 0.0, 0.0);
+
+const COLD_TEMP: f32 = 0.0;
+const COLD_COLOR: glam::Vec3 = glam::vec3(0.0, 0.0, 1.0);
 
 pub struct Canvas {
     surface: wgpu::Surface<'static>,
@@ -43,6 +55,7 @@ pub struct Canvas {
     light_binding: resources::light::LightBinding,
     lmb_down: bool,
     gameplay_timer: web_time::Instant,
+    simulation_accumulator: web_time::Duration,
     simulation: Simulation,
     environment: Environment,
     solar_panel: usize,
@@ -228,29 +241,43 @@ impl Canvas {
         let environment = Environment::default();
         let mut simulation = Simulation::new();
 
-        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, glam::vec3(-0.5, 0.0, 0.0));
-        let extractor = simulation.add_node(10.0, 20.0, 0.9, glam::vec3(0.5, 0.0, 0.0));
+        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, 100.0, glam::vec3(-0.5, 0.0, 0.0));
+        let extractor = simulation.add_node(10.0, 20.0, 0.9, 100.0, glam::vec3(0.5, 0.0, 0.0));
 
         simulation.connect_node(solar_panel, extractor, 1.0);
         simulation.connect_node(extractor, solar_panel, 1.0);
 
+        simulation.attach_solar_panel(
+            solar_panel,
+            SolarPanel {
+                area: 1.0,
+                efficiency: 0.9,
+            },
+        );
+
         let node_instances = buffer::BackedBuffer::with_data(
             &device,
-            simulation.nodes().iter().map(|node| {
-                ColoredInstance::with_position_scale(glam::vec3(1.0, 0.0, 0.0), node.position, 0.1)
-            }).collect(),
+            simulation
+                .nodes()
+                .iter()
+                .map(|node| instance_from_node(node))
+                .collect(),
             wgpu::BufferUsages::VERTEX,
         );
 
         let connection_instances = buffer::BackedBuffer::with_data(
             &device,
-            simulation.connected_nodes().map(|(flow_rate, input, output)| {
-                ColoredInstance::extend_between(glam::vec3(1.0, 0.0, 0.0), input.position, output.position, 0.02 * flow_rate)
-            }).collect(),
+            simulation
+                .connected_nodes()
+                .map(|(flow_rate, input, output)| {
+                    instance_from_connection(flow_rate, input, output)
+                })
+                .collect(),
             wgpu::BufferUsages::VERTEX,
         );
 
-        let visualization_pipeline = VisualizationPipeline::new(&device, config.format, depth_format, &camera_binder);
+        let visualization_pipeline =
+            VisualizationPipeline::new(&device, config.format, depth_format, &camera_binder);
 
         let last_time = web_time::Instant::now();
 
@@ -286,6 +313,7 @@ impl Canvas {
             solar_panel,
             extractor,
             gameplay_timer: web_time::Instant::now(),
+            simulation_accumulator: web_time::Duration::ZERO,
         })
     }
 
@@ -314,15 +342,42 @@ impl Canvas {
         };
 
         if self.num_ticks == 100 {
+            let mut text = String::new();
+
+            self.node_instances.clear();
+            let mut batch = self.node_instances.batch(&self.device, &self.queue);
+
+            for (i, node) in self.simulation.nodes().iter().enumerate() {
+                if i > 0 {
+                    text += "\n";
+                }
+
+                text += &format!("{i}: {:.2} mL @ {:.2} C", node.fluid.volume, node.fluid.temp);
+
+                batch.push(instance_from_node(node));
+            }
+
+            drop(batch);
+
             self.text_pipeline
                 .update_text(
                     &self.font,
-                    &format!("Tick Rate: {:?}", self.frame_timer.elapsed() / 100),
+                    &text,
                     &mut self.mspt_text,
                     &self.device,
                     &self.queue,
                 )
                 .unwrap();
+
+            {
+                self.connection_instances.clear();
+                let mut batch = self.connection_instances.batch(&self.device, &self.queue);
+
+                for (flow_rate, input, output) in self.simulation.connected_nodes() {
+                    batch.push(instance_from_connection(flow_rate, input, output));
+                }
+            }
+
             self.frame_timer = web_time::Instant::now();
             self.num_ticks = 0;
         }
@@ -330,6 +385,13 @@ impl Canvas {
 
         let dt = self.gameplay_timer.elapsed();
         self.gameplay_timer = web_time::Instant::now();
+
+        self.simulation_accumulator += dt;
+        while self.simulation_accumulator >= SIMULATION_TICK_RATE {
+            self.simulation
+                .tick(&self.environment, SIMULATION_TICK_RATE_F32);
+            self.simulation_accumulator -= SIMULATION_TICK_RATE;
+        }
 
         self.camera_controller
             .update_camera(&mut self.perspective_camera, dt);
@@ -392,7 +454,7 @@ impl Canvas {
                 &self.perspective_camera_binding,
                 &self.node_instances,
             );
-            
+
             self.visualization_pipeline.draw(
                 &mut pass,
                 self.connection_model,
@@ -425,7 +487,7 @@ impl Canvas {
             MouseButton::Left => {
                 self.lmb_down = pressed;
                 self.window.set_cursor_visible(!pressed);
-            },
+            }
             _ => {}
         }
     }
@@ -433,4 +495,21 @@ impl Canvas {
     pub(crate) fn handle_key(&mut self, key: KeyCode, pressed: bool) {
         self.camera_controller.process_keyboard(key, pressed);
     }
+}
+
+fn instance_from_node(node: &crate::simulation::Node) -> ColoredInstance {
+    let s = rev_lerp(COLD_TEMP, HOT_TEMP, node.fluid.temp);
+    let color = COLD_COLOR.lerp(HOT_COLOR, s);
+    ColoredInstance::with_position_scale(color, node.position, 0.1)
+}
+
+fn instance_from_connection(
+    flow_rate: f32,
+    input: &crate::simulation::Node,
+    output: &crate::simulation::Node,
+) -> ColoredInstance {
+    let avg_temp = (input.fluid.temp + output.fluid.temp) * 0.5;
+    let s = rev_lerp(COLD_TEMP, HOT_TEMP, avg_temp);
+    let color = COLD_COLOR.lerp(HOT_COLOR, s);
+    ColoredInstance::extend_between(color, input.position, output.position, 0.02 * flow_rate)
 }

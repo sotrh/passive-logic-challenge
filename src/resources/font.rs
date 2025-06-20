@@ -230,16 +230,23 @@ fn generate_text_data(font: &Font, text: &str) -> (Vec<TexturedVertex>, Vec<u32>
     let tex_width = font.texture.width() as f32;
     let tex_height = font.texture.height() as f32;
 
-    let mut cursor = 0.0;
+    let mut cursor_x = 0.0;
+    let mut cursor_y = 0.0;
     let mut i = 0u32;
 
     let mut verts = Vec::new();
     let mut indices = Vec::new();
     for c in text.chars() {
+        if c == '\n' {
+            cursor_x = 0.0;
+            cursor_y += font.info.common.line_height as f32;
+            continue;
+        }
+
         let glyph = font.glyph(c).unwrap_or_else(|| font.unknown_glyph());
 
         if glyph.width == 0 || glyph.height == 0 {
-            cursor += glyph.xadvance as f32;
+            cursor_x += glyph.xadvance as f32;
             continue;
         }
 
@@ -251,8 +258,8 @@ fn generate_text_data(font: &Font, text: &str) -> (Vec<TexturedVertex>, Vec<u32>
             );
 
         let p1 = glam::vec2(
-            cursor + glyph.xoffset as f32 + 20.0,
-            glyph.yoffset as f32 + 20.0,
+            cursor_x + glyph.xoffset as f32 + 20.0,
+            cursor_y + glyph.yoffset as f32 + 20.0,
         );
         let p2 = p1 + glam::vec2(glyph.width as f32, glyph.height as f32);
 
@@ -277,7 +284,7 @@ fn generate_text_data(font: &Font, text: &str) -> (Vec<TexturedVertex>, Vec<u32>
 
         indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
 
-        cursor += glyph.xadvance as f32;
+        cursor_x += glyph.xadvance as f32;
         i += 4;
     }
     (verts, indices)

@@ -1,8 +1,12 @@
 pub mod visualization;
 
 use core::f32;
-use std::ops::{Add, AddAssign};
+use std::{
+    collections::HashMap,
+    ops::{Add, AddAssign},
+};
 
+#[derive(Debug)]
 pub struct Environment {
     sun_angle: f32,
     sun_irradiance: f32,
@@ -25,6 +29,7 @@ impl Default for Environment {
 pub struct Simulation {
     nodes: Vec<Node>,
     connections: Vec<Connection>,
+    solar_panels: HashMap<usize, SolarPanel>,
 }
 
 impl Simulation {
@@ -32,6 +37,7 @@ impl Simulation {
         Self {
             nodes: Vec::new(),
             connections: Vec::new(),
+            solar_panels: HashMap::new(),
         }
     }
 
@@ -40,12 +46,14 @@ impl Simulation {
         volume: f32,
         temp: f32,
         insulation: f32,
+        capacity: f32,
         position: glam::Vec3,
     ) -> usize {
         let i = self.nodes.len();
         self.nodes.push(Node {
             fluid: Fluid { volume, temp },
             insulation,
+            capacity,
             position,
         });
         i
@@ -80,8 +88,16 @@ impl Simulation {
         }
     }
 
+    pub fn attach_solar_panel(&mut self, id: usize, panel: SolarPanel) {
+        if self.contains_node(id) {
+            self.solar_panels.insert(id, panel);
+        }
+    }
+
     pub fn tick(&mut self, environment: &Environment, dt: f32) {
         self.handle_heat_losses(environment, dt);
+        self.handle_solar_panels(environment, dt);
+        self.handle_fluid_transfer(dt);
     }
 
     fn handle_heat_losses(&mut self, environment: &Environment, dt: f32) {
@@ -89,6 +105,66 @@ impl Simulation {
             let temp_diff = node.fluid.temp - environment.ambient_temp;
             node.fluid.temp -= temp_diff * (1.0 - node.insulation) * dt;
         }
+    }
+
+    fn handle_solar_panels(&mut self, environment: &Environment, dt: f32) {
+        for (node, panel) in &self.solar_panels {
+            let node = &mut self.nodes[*node];
+
+            if node.fluid.volume == 0.0 {
+                continue;
+            }
+
+            let q = environment.sun_irradiance
+                * dbg!(environment.sun_angle.sin().max(0.0))
+                * (1.0 - environment.cloud_cover)
+                * panel.area
+                * dt
+                * panel.efficiency;
+
+            // assuming fluid is water and volume is in mL
+            let density = 1.0; // g / mL
+            let c = 4.186; // J / (g deg C)
+            let m = node.fluid.volume * density; // g
+            let d_temp = q / (m * c);
+
+            // log::debug!("d_temp: {d_temp} C, fluid: {:?}", node.fluid);
+            // log::debug!("{environment:?}");
+
+            node.fluid.temp += d_temp;
+        }
+    }
+
+    fn handle_fluid_transfer(&mut self, dt: f32) {
+        for connection in &self.connections {
+            if !self.contains_node(connection.input)
+                || !self.contains_node(connection.output)
+                || connection.input == connection.output
+            {
+                continue;
+            }
+
+            let amount_available = connection
+                .flow_rate
+                .min(self.nodes[connection.input].fluid.volume);
+            let space_available =
+                self.nodes[connection.output].capacity - self.nodes[connection.output].fluid.volume;
+
+            let amount_transfered = (amount_available * dt).min(space_available);
+
+            self.nodes[connection.input].fluid.volume -= amount_transfered;
+
+            let fluid_transferred = Fluid {
+                temp: self.nodes[connection.input].fluid.temp,
+                volume: amount_transfered,
+            };
+
+            self.nodes[connection.output].fluid += fluid_transferred;
+        }
+    }
+
+    pub fn contains_node(&self, id: usize) -> bool {
+        id < self.nodes.len()
     }
 }
 
@@ -117,17 +193,16 @@ impl<'a> Iterator for IterConnections<'a> {
             }
 
             self.index += 1;
-
         }
-        
+
         out
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fluid {
-    volume: f32,
-    temp: f32,
+    pub volume: f32,
+    pub temp: f32,
 }
 
 impl Add for Fluid {
@@ -135,10 +210,13 @@ impl Add for Fluid {
 
     fn add(self, rhs: Self) -> Self::Output {
         let volume = self.volume + rhs.volume;
-        Self {
-            volume,
-            temp: self.temp * self.volume / volume + rhs.temp * rhs.volume / volume,
-        }
+        let temp = if volume == 0.0 {
+            0.0
+        } else {
+            self.temp * self.volume / volume + rhs.temp * rhs.volume / volume
+        };
+
+        Self { volume, temp }
     }
 }
 
@@ -151,6 +229,7 @@ impl AddAssign for Fluid {
 #[derive(Debug, Clone)]
 pub struct Node {
     pub fluid: Fluid,
+    pub capacity: f32,
     pub insulation: f32,
     pub position: glam::Vec3,
 }
@@ -160,6 +239,12 @@ pub struct Connection {
     pub flow_rate: f32,
     pub input: usize,
     pub output: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SolarPanel {
+    pub area: f32,
+    pub efficiency: f32,
 }
 
 #[cfg(test)]
@@ -195,7 +280,7 @@ mod tests {
         let nodes = (0..num_nodes)
             .map(|i| {
                 let x = i as f32;
-                simulation.add_node(x, x * 10.0, 0.9, glam::Vec3 { x, y: 0.0, z: 0.0 })
+                simulation.add_node(x, x * 10.0, 0.9, 100.0, glam::Vec3 { x, y: 0.0, z: 0.0 })
             })
             .collect::<Vec<_>>();
 
@@ -217,5 +302,30 @@ mod tests {
                 assert_eq!(original.fluid.temp, updated.fluid.temp);
             }
         }
+    }
+
+    #[test]
+    fn test_fluid_transfer() {
+        let mut sim = Simulation::new();
+
+        let a = sim.add_node(10.0, 100.0, 1.0, 100.0, glam::Vec3::ZERO);
+        let b = sim.add_node(10.0, 20.0, 1.0, 100.0, glam::Vec3::ZERO);
+
+        sim.connect_node(a, b, 1.0);
+
+        let original = sim.clone();
+
+        sim.handle_fluid_transfer(1.0);
+
+        assert!(
+            original.get_node(a).unwrap().fluid.volume > sim.get_node(a).unwrap().fluid.volume,
+            "{}",
+            sim.get_node(a).unwrap().fluid.volume
+        );
+        assert!(
+            original.get_node(b).unwrap().fluid.volume < sim.get_node(b).unwrap().fluid.volume,
+            "{}",
+            sim.get_node(a).unwrap().fluid.volume
+        );
     }
 }

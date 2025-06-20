@@ -80,6 +80,10 @@ impl<T: bytemuck::Pod + bytemuck::Zeroable> BackedBuffer<T> {
     pub fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
     }
+    
+    pub fn clear(&mut self) {
+        self.data.clear();
+    }
 }
 
 pub struct Batch<'a, T: bytemuck::Pod + bytemuck::Zeroable> {

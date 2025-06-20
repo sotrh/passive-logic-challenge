@@ -96,3 +96,7 @@ impl<'a> RenderPipelineBuilder<'a> {
         )
     }
 }
+
+pub fn rev_lerp(a: f32, b: f32, c: f32) -> f32 {
+    (c - a) / (b - a)
+}
