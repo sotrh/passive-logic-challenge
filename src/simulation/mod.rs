@@ -30,6 +30,7 @@ pub struct Simulation {
     nodes: Vec<Node>,
     connections: Vec<Connection>,
     solar_panels: HashMap<usize, SolarPanel>,
+    extractors: HashMap<usize, Extractor>,
 }
 
 impl Simulation {
@@ -38,6 +39,7 @@ impl Simulation {
             nodes: Vec::new(),
             connections: Vec::new(),
             solar_panels: HashMap::new(),
+            extractors: HashMap::new(),
         }
     }
 
@@ -59,10 +61,6 @@ impl Simulation {
         i
     }
 
-    pub fn get_node(&self, node: usize) -> Option<&'_ Node> {
-        self.nodes.get(node)
-    }
-
     pub fn connect_node(&mut self, input: usize, output: usize, flow_rate: f32) {
         if input < self.nodes.len() && output < self.nodes.len() {
             self.connections.push(Connection {
@@ -77,8 +75,13 @@ impl Simulation {
         &self.nodes
     }
 
-    pub fn connections(&self) -> &[Connection] {
-        &self.connections
+    #[allow(unused)]
+    pub fn get_node(&self, id: usize) -> Option<&Node> {
+        if self.contains_node(id) {
+            Some(&self.nodes[id])
+        } else {
+            None
+        }
     }
 
     pub fn connected_nodes(&self) -> IterConnections {
@@ -93,10 +96,17 @@ impl Simulation {
             self.solar_panels.insert(id, panel);
         }
     }
+    
+    pub fn attach_extractor(&mut self, id: usize, extractor: Extractor) {
+        if self.contains_node(id) {
+            self.extractors.insert(id, extractor);
+        }
+    }
 
     pub fn tick(&mut self, environment: &Environment, dt: f32) {
         self.handle_heat_losses(environment, dt);
         self.handle_solar_panels(environment, dt);
+        self.handle_extractors(dt);
         self.handle_fluid_transfer(dt);
     }
 
@@ -116,22 +126,26 @@ impl Simulation {
             }
 
             let q = environment.sun_irradiance
-                * dbg!(environment.sun_angle.sin().max(0.0))
+                * environment.sun_angle.sin().max(0.0)
                 * (1.0 - environment.cloud_cover)
                 * panel.area
                 * dt
                 * panel.efficiency;
 
-            // assuming fluid is water and volume is in mL
-            let density = 1.0; // g / mL
-            let c = 4.186; // J / (g deg C)
-            let m = node.fluid.volume * density; // g
-            let d_temp = q / (m * c);
-
-            // log::debug!("d_temp: {d_temp} C, fluid: {:?}", node.fluid);
-            // log::debug!("{environment:?}");
+            let d_temp = calculate_d_temp(node.fluid.volume, q);
 
             node.fluid.temp += d_temp;
+        }
+    }
+
+    fn handle_extractors(&mut self, dt: f32) {
+        for (node, extractor) in &self.extractors {
+            let node = &mut self.nodes[*node];
+
+            let q = extractor.power_draw * extractor.efficiency * dt;
+            let d_temp = calculate_d_temp(node.fluid.volume, q);
+
+            node.fluid.temp -= d_temp;
         }
     }
 
@@ -168,6 +182,18 @@ impl Simulation {
     }
 }
 
+fn calculate_d_temp(volume: f32, q: f32) -> f32 {
+    // assuming fluid is water and volume is in mL
+    let density = 1.0;
+    // g / mL
+    let c = 4.186;
+    // J / (g deg C)
+    let m = volume * density;
+    // g
+    let d_temp = q / (m * c);
+    d_temp
+}
+
 pub struct IterConnections<'a> {
     simulation: &'a Simulation,
     index: usize,
@@ -179,12 +205,15 @@ impl<'a> Iterator for IterConnections<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let mut out = None;
 
-        while self.index < self.simulation.connections.len() {
+        while out.is_none() && self.index < self.simulation.connections.len() {
             let connection = &self.simulation.connections[self.index];
 
-            if self.simulation.nodes.len() > connection.input
-                && self.simulation.nodes.len() > connection.output
+            // log::debug!("{}", self.index);
+
+            if self.simulation.contains_node(connection.input)
+                && self.simulation.contains_node(connection.output)
             {
+                log::debug!("returning");
                 out = Some((
                     connection.flow_rate,
                     &self.simulation.nodes[connection.input],
@@ -244,6 +273,12 @@ pub struct Connection {
 #[derive(Debug, Clone)]
 pub struct SolarPanel {
     pub area: f32,
+    pub efficiency: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct Extractor {
+    pub power_draw: f32,
     pub efficiency: f32,
 }
 

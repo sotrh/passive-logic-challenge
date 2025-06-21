@@ -17,7 +17,7 @@ use crate::{
         vertex::{ColoredInstance, InstanceVertex},
         FsResources,
     },
-    simulation::{visualization::VisualizationPipeline, Environment, Simulation, SolarPanel},
+    simulation::{visualization::VisualizationPipeline, Environment, Extractor, Simulation, SolarPanel},
     utils::{rev_lerp, RenderPipelineBuilder},
 };
 
@@ -241,11 +241,13 @@ impl Canvas {
         let environment = Environment::default();
         let mut simulation = Simulation::new();
 
-        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, 100.0, glam::vec3(-0.5, 0.0, 0.0));
-        let extractor = simulation.add_node(10.0, 20.0, 0.9, 100.0, glam::vec3(0.5, 0.0, 0.0));
+        let solar_panel = simulation.add_node(10.0, 50.0, 0.9, 100.0, glam::vec3(-0.5, -0.5, 0.0));
+        let extractor = simulation.add_node(10.0, 20.0, 0.9, 100.0, glam::vec3(0.5, -0.5, 0.0));
+        let pump = simulation.add_node(10.0, 20.0, 0.9, 100.0, glam::vec3(0.0, 0.5, 0.0));
 
-        simulation.connect_node(solar_panel, extractor, 1.0);
-        simulation.connect_node(extractor, solar_panel, 1.0);
+        simulation.connect_node(solar_panel, extractor, 10.0);
+        simulation.connect_node(extractor, pump, 10.0);
+        simulation.connect_node(pump, solar_panel, 10.0);
 
         simulation.attach_solar_panel(
             solar_panel,
@@ -253,6 +255,14 @@ impl Canvas {
                 area: 1.0,
                 efficiency: 0.9,
             },
+        );
+
+        simulation.attach_extractor(
+            extractor,
+            Extractor {
+                power_draw: 100.0,
+                efficiency: 0.9,
+            }
         );
 
         let node_instances = buffer::BackedBuffer::with_data(
@@ -504,12 +514,12 @@ fn instance_from_node(node: &crate::simulation::Node) -> ColoredInstance {
 }
 
 fn instance_from_connection(
-    flow_rate: f32,
+    _flow_rate: f32,
     input: &crate::simulation::Node,
     output: &crate::simulation::Node,
 ) -> ColoredInstance {
     let avg_temp = (input.fluid.temp + output.fluid.temp) * 0.5;
     let s = rev_lerp(COLD_TEMP, HOT_TEMP, avg_temp);
     let color = COLD_COLOR.lerp(HOT_COLOR, s);
-    ColoredInstance::extend_between(color, input.position, output.position, 0.02 * flow_rate)
+    ColoredInstance::extend_between(color, input.position, output.position, 0.02)
 }

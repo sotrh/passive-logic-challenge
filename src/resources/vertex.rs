@@ -155,8 +155,9 @@ impl ColoredInstance {
             ab / dist
         };
         let scale = glam::vec3(radial_scale, dist * 0.5, radial_scale);
-        let position = (a + b) * 2.0;
+        let position = (a + b) * 0.5;
         let rotation = glam::Quat::from_rotation_arc(glam::Vec3::Y, dir);
+        log::debug!("{a:?} {b:?}, {position:?}");
         Self {
             color: glam::vec4(color.x, color.y, color.z, 1.0),
             model_matrix: glam::Mat4::from_scale_rotation_translation(scale, rotation, position),
